@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,9 +18,22 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            val props = Properties().apply {
+                load(rootProject.file("local.properties").inputStream())
+            }
+            storeFile = file(props["RADARROID_STORE_FILE"] as String)
+            storePassword = props["RADARROID_STORE_PASSWORD"] as String
+            keyAlias = props["RADARROID_KEY_ALIAS"] as String
+            keyPassword = props["RADARROID_KEY_PASSWORD"] as String
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {

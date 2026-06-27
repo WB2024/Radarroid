@@ -1,0 +1,1 @@
+-keep class com.radarrtv.androidtv.data.api.model.** { *; }

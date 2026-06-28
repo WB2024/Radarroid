@@ -69,13 +69,14 @@ class AuthHelper(private val serverUrl: String) {
             throw Exception("Server returned a web page instead of data — check the URL includes the correct port (e.g. http://192.168.1.250:7878)")
     }
 
-    // Radarr/Sonarr do not support HTTP Basic auth on API endpoints — this is a
-    // best-effort attempt for alternative *arr tools that may support it.
+    // When Radarr is configured for Basic authentication, /initialize.json accepts
+    // an Authorization: Basic header and returns the apiKey. API endpoints (/api/v3/...)
+    // only accept X-Api-Key, so we use the web UI endpoint here instead.
     private fun tryBasicAuth(username: String, password: String): String? {
         return try {
             val resp = makeClient(followRedirects = false).newCall(
                 Request.Builder()
-                    .url("$base/api/v3/config/host")
+                    .url("$base/initialize.json")
                     .header("Authorization", basicHeader(username, password))
                     .get()
                     .build()
@@ -119,7 +120,7 @@ class AuthHelper(private val serverUrl: String) {
             location.contains("loginFailed=true", ignoreCase = true) ->
                 throw Exception("Login failed — check username and password")
             loginResp.code == 500 ->
-                throw Exception("Server error on login (500) — check the Radarr logs")
+                throw Exception("Login failed (500) — if Radarr uses Basic auth, enter your API key directly instead of username/password")
             loginResp.code !in 200..399 ->
                 throw Exception("Login failed (${loginResp.code})")
         }

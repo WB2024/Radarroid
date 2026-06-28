@@ -20,12 +20,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.radarrtv.androidtv.data.api.model.TmdbCountry
 import com.radarrtv.androidtv.data.api.model.TmdbGenre
 import com.radarrtv.androidtv.data.api.model.TmdbMovie
 import com.radarrtv.androidtv.data.api.model.TmdbPagedResult
@@ -48,11 +51,17 @@ private enum class FinderMode(val label: String, val icon: androidx.compose.ui.g
     NOW_PLAYING("In Cinemas", Icons.Default.Theaters),
     UPCOMING("Upcoming", Icons.Default.EventAvailable),
     DISCOVER("Discover", Icons.Default.Tune),
+    WATCH_PROVIDERS("Streaming", Icons.Default.LiveTv),
     BY_PERSON("By Person", Icons.Default.Person),
     BY_COLLECTION("Collections", Icons.Default.Collections),
     BY_COMPANY("By Studio", Icons.Default.Business),
-    BY_KEYWORD("By Keyword", Icons.Default.Tag)
+    BY_KEYWORD("By Keyword", Icons.Default.Tag),
+    BY_COUNTRY("By Country", Icons.Default.Public),
+    BY_LIST("By List", Icons.Default.FormatListBulleted)
 }
+
+private enum class SortField { DEFAULT, RATING, YEAR, TITLE, POPULARITY, VOTES }
+
 
 // ── Main Screen ──────────────────────────────────────────────────────────────
 
@@ -70,6 +79,7 @@ fun TitleFinderScreen(
     // For similar/recommendations launched from the detail dialog
     var similarContext by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var recommendContext by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var collectionContext by remember { mutableStateOf<Pair<Int, String>?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -138,10 +148,13 @@ fun TitleFinderScreen(
             FinderMode.NOW_PLAYING -> PagedListMode("In Cinemas", libraryMap, { tmdbRepo.getNowPlaying(it) }) { selectedTmdbId = it }
             FinderMode.UPCOMING -> PagedListMode("Upcoming", libraryMap, { tmdbRepo.getUpcoming(it) }) { selectedTmdbId = it }
             FinderMode.DISCOVER -> DiscoverMode(tmdbRepo, libraryMap, similarContext, recommendContext) { selectedTmdbId = it }
+            FinderMode.WATCH_PROVIDERS -> ByWatchProviderMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_PERSON -> ByPersonMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
-            FinderMode.BY_COLLECTION -> ByCollectionMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
+            FinderMode.BY_COLLECTION -> ByCollectionMode(tmdbRepo, libraryMap, collectionContext) { selectedTmdbId = it; collectionContext = null }
             FinderMode.BY_COMPANY -> ByCompanyMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_KEYWORD -> ByKeywordMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
+            FinderMode.BY_COUNTRY -> ByCountryMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
+            FinderMode.BY_LIST -> ByListMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
         }
     }
 
@@ -167,6 +180,11 @@ fun TitleFinderScreen(
                 recommendContext = id to title
                 similarContext = null
                 activeMode = FinderMode.DISCOVER
+                selectedTmdbId = null
+            },
+            onBrowseCollection = { colId, colName ->
+                collectionContext = colId to colName
+                activeMode = FinderMode.BY_COLLECTION
                 selectedTmdbId = null
             }
         )
@@ -225,6 +243,15 @@ private fun NoTmdbKeyWarning() {
 
 // ── Results Grid + Pagination ─────────────────────────────────────────────────
 
+private val SORT_LABELS = listOf(
+    SortField.DEFAULT to "Default",
+    SortField.RATING to "Rating",
+    SortField.YEAR to "Year",
+    SortField.POPULARITY to "Popularity",
+    SortField.VOTES to "Vote Count",
+    SortField.TITLE to "Title"
+)
+
 @Composable
 private fun ResultsGrid(
     movies: List<TmdbMovie>,
@@ -235,26 +262,62 @@ private fun ResultsGrid(
     onNext: () -> Unit,
     onMovieClick: (Int) -> Unit
 ) {
+    var sortField by remember { mutableStateOf(SortField.DEFAULT) }
+    var sortAsc by remember { mutableStateOf(false) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
+
+    val displayMovies = remember(movies, sortField, sortAsc) {
+        val sorted = when (sortField) {
+            SortField.DEFAULT -> movies
+            SortField.RATING -> movies.sortedBy { it.voteAverage }
+            SortField.YEAR -> movies.sortedBy { it.year }
+            SortField.POPULARITY -> movies.sortedBy { it.popularity }
+            SortField.VOTES -> movies.sortedBy { it.voteCount }
+            SortField.TITLE -> movies.sortedBy { it.title.lowercase() }
+        }
+        if (sortField != SortField.DEFAULT && !sortAsc) sorted.reversed() else sorted
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        // Pagination bar
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 12.dp)
+            modifier = Modifier.padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
-                "${movies.size} results",
+                "${movies.size} results · page $page/$totalPages",
                 style = MaterialTheme.typography.bodyMedium,
                 color = RadarrMuted,
                 modifier = Modifier.weight(1f)
             )
+            // Sort
+            Box {
+                TvFocusButton(onClick = { sortMenuOpen = true }) {
+                    Icon(Icons.Default.Sort, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(SORT_LABELS.find { it.first == sortField }?.second ?: "Sort", style = MaterialTheme.typography.labelMedium)
+                    if (sortField != SortField.DEFAULT) {
+                        Spacer(Modifier.width(2.dp))
+                        Icon(if (sortAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward, null, Modifier.size(12.dp))
+                    }
+                }
+                DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }, modifier = Modifier.background(RadarrSurface)) {
+                    SORT_LABELS.forEach { (field, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label, color = if (field == sortField) RadarrBlue else RadarrWhite) },
+                            onClick = {
+                                if (field == sortField && field != SortField.DEFAULT) sortAsc = !sortAsc
+                                else { sortField = field; sortAsc = false }
+                                sortMenuOpen = false
+                            }
+                        )
+                    }
+                }
+            }
+            // Pagination
             TvFocusButton(onClick = onPrev, enabled = page > 1) {
                 Icon(Icons.Default.ChevronLeft, null, Modifier.size(18.dp))
             }
-            Text(
-                "  $page / $totalPages  ",
-                style = MaterialTheme.typography.bodyMedium,
-                color = RadarrWhite
-            )
             TvFocusButton(onClick = onNext, enabled = page < totalPages) {
                 Icon(Icons.Default.ChevronRight, null, Modifier.size(18.dp))
             }
@@ -266,7 +329,7 @@ private fun ResultsGrid(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            items(movies, key = { it.id }) { movie ->
+            items(displayMovies, key = { it.id }) { movie ->
                 TmdbMovieCard(
                     movie = movie,
                     inLibrary = libraryMap.containsKey(movie.id),
@@ -352,9 +415,7 @@ fun TmdbMovieCard(
                 Text(
                     movie.title,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (isFocused) RadarrWhite else RadarrWhite.copy(alpha = 0.9f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    color = if (isFocused) RadarrWhite else RadarrWhite.copy(alpha = 0.9f)
                 )
                 if (movie.year.isNotBlank()) {
                     Text(
@@ -521,10 +582,16 @@ private fun DiscoverMode(
     var selectedGenres by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var sortBy by remember { mutableStateOf("popularity.desc") }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    var yearFilter by remember { mutableStateOf("") }
+    var yearFrom by remember { mutableStateOf("") }
+    var yearTo by remember { mutableStateOf("") }
     var minRating by remember { mutableStateOf("") }
     var minVotes by remember { mutableStateOf("") }
+    var minRuntime by remember { mutableStateOf("") }
+    var maxRuntime by remember { mutableStateOf("") }
     var language by remember { mutableStateOf("") }
+    var originCountry by remember { mutableStateOf("") }
+    var certification by remember { mutableStateOf("") }
+    var certMenuOpen by remember { mutableStateOf(false) }
     var page by remember { mutableIntStateOf(1) }
     var state by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>>(UiState.Loading) }
     val scope = rememberCoroutineScope()
@@ -562,10 +629,17 @@ private fun DiscoverMode(
                         tmdbRepo.discover(
                             sortBy = sortBy,
                             genreIds = selectedGenres.toList(),
-                            year = yearFilter.toIntOrNull(),
+                            year = if (yearFrom.isBlank() && yearTo.isBlank()) null else null,
+                            releaseDateGte = yearFrom.toIntOrNull()?.let { "$it-01-01" },
+                            releaseDateLte = yearTo.toIntOrNull()?.let { "$it-12-31" },
                             minRating = minRating.toFloatOrNull(),
                             minVotes = minVotes.toIntOrNull(),
+                            minRuntime = minRuntime.toIntOrNull(),
+                            maxRuntime = maxRuntime.toIntOrNull(),
                             language = language.trim().ifBlank { null },
+                            originCountry = originCountry.trim().uppercase().ifBlank { null },
+                            certification = certification.ifBlank { null },
+                            certificationCountry = if (certification.isNotBlank()) "US" else null,
                             page = p
                         )
                     )
@@ -636,14 +710,25 @@ private fun DiscoverMode(
                     }
                 }
 
-                // Extra filters row
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Date / rating / runtime row
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                ) {
                     OutlinedTextField(
-                        value = yearFilter,
-                        onValueChange = { yearFilter = it },
-                        placeholder = { Text("Year", color = RadarrMuted) },
+                        value = yearFrom,
+                        onValueChange = { yearFrom = it },
+                        placeholder = { Text("Year from", color = RadarrMuted) },
                         singleLine = true,
-                        modifier = Modifier.width(100.dp),
+                        modifier = Modifier.width(110.dp),
+                        colors = searchFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = yearTo,
+                        onValueChange = { yearTo = it },
+                        placeholder = { Text("Year to", color = RadarrMuted) },
+                        singleLine = true,
+                        modifier = Modifier.width(110.dp),
                         colors = searchFieldColors()
                     )
                     OutlinedTextField(
@@ -651,7 +736,7 @@ private fun DiscoverMode(
                         onValueChange = { minRating = it },
                         placeholder = { Text("Min ★", color = RadarrMuted) },
                         singleLine = true,
-                        modifier = Modifier.width(100.dp),
+                        modifier = Modifier.width(90.dp),
                         colors = searchFieldColors()
                     )
                     OutlinedTextField(
@@ -659,17 +744,65 @@ private fun DiscoverMode(
                         onValueChange = { minVotes = it },
                         placeholder = { Text("Min votes", color = RadarrMuted) },
                         singleLine = true,
-                        modifier = Modifier.width(120.dp),
+                        modifier = Modifier.width(110.dp),
                         colors = searchFieldColors()
                     )
+                    OutlinedTextField(
+                        value = minRuntime,
+                        onValueChange = { minRuntime = it },
+                        placeholder = { Text("Min min", color = RadarrMuted) },
+                        singleLine = true,
+                        modifier = Modifier.width(90.dp),
+                        colors = searchFieldColors()
+                    )
+                    OutlinedTextField(
+                        value = maxRuntime,
+                        onValueChange = { maxRuntime = it },
+                        placeholder = { Text("Max min", color = RadarrMuted) },
+                        singleLine = true,
+                        modifier = Modifier.width(90.dp),
+                        colors = searchFieldColors()
+                    )
+                }
+
+                // Language / country / certification row
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     OutlinedTextField(
                         value = language,
                         onValueChange = { language = it },
                         placeholder = { Text("Lang (en)", color = RadarrMuted) },
                         singleLine = true,
-                        modifier = Modifier.width(110.dp),
+                        modifier = Modifier.width(100.dp),
                         colors = searchFieldColors()
                     )
+                    OutlinedTextField(
+                        value = originCountry,
+                        onValueChange = { originCountry = it },
+                        placeholder = { Text("Country (US)", color = RadarrMuted) },
+                        singleLine = true,
+                        modifier = Modifier.width(130.dp),
+                        colors = searchFieldColors()
+                    )
+                    // Certification
+                    Box {
+                        TvFocusButton(onClick = { certMenuOpen = true }) {
+                            Text(certification.ifBlank { "Rating" }, style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(4.dp))
+                            Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp))
+                        }
+                        DropdownMenu(expanded = certMenuOpen, onDismissRequest = { certMenuOpen = false }, modifier = Modifier.background(RadarrSurface)) {
+                            listOf("", "G", "PG", "PG-13", "R", "NC-17").forEach { cert ->
+                                DropdownMenuItem(
+                                    text = { Text(cert.ifBlank { "Any rating" }, color = if (cert == certification) RadarrBlue else RadarrWhite) },
+                                    onClick = { certification = cert; certMenuOpen = false }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
                     TvFocusButton(onClick = { runDiscover(1) }, isPrimary = true) {
                         Icon(Icons.Default.Search, null, Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
@@ -692,6 +825,7 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
     var peopleState by remember { mutableStateOf<UiState<List<com.radarrtv.androidtv.data.api.model.TmdbPerson>>>(UiState.Success(emptyList())) }
     var moviesState by remember { mutableStateOf<UiState<List<TmdbMovie>>?>(null) }
     var selectedPerson by remember { mutableStateOf<com.radarrtv.androidtv.data.api.model.TmdbPerson?>(null) }
+    var personDetail by remember { mutableStateOf<com.radarrtv.androidtv.data.api.model.TmdbPersonDetail?>(null) }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
@@ -722,7 +856,7 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
                 colors = searchFieldColors()
             )
             if (selectedPerson != null) {
-                TvFocusButton(onClick = { selectedPerson = null; moviesState = null; query = "" }) {
+                TvFocusButton(onClick = { selectedPerson = null; moviesState = null; personDetail = null; query = "" }) {
                     Icon(Icons.Default.Close, null, Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Clear")
@@ -750,15 +884,21 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
                                 PersonCard(person, tmdbRepo) {
                                     selectedPerson = person
                                     moviesState = UiState.Loading
+                                    personDetail = null
                                     scope.launch {
-                                        moviesState = try {
-                                            val credits = tmdbRepo.getPersonMovieCredits(person.id)
-                                            UiState.Success(
-                                                (credits.cast + credits.crew)
-                                                    .distinctBy { it.id }
-                                                    .sortedByDescending { it.popularity }
-                                            )
-                                        } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+                                        launch {
+                                            moviesState = try {
+                                                val credits = tmdbRepo.getPersonMovieCredits(person.id)
+                                                UiState.Success(
+                                                    (credits.cast + credits.crew)
+                                                        .distinctBy { it.id }
+                                                        .sortedByDescending { it.popularity }
+                                                )
+                                            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+                                        }
+                                        launch {
+                                            personDetail = try { tmdbRepo.getPersonDetail(person.id) } catch (_: Exception) { null }
+                                        }
                                     }
                                 }
                             }
@@ -770,7 +910,7 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
             val ms = moviesState
             val person = selectedPerson!!
             Column(modifier = Modifier.fillMaxSize()) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
                     Icon(Icons.Default.Person, null, tint = RadarrBlue, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Filmography: ${person.name}", style = MaterialTheme.typography.titleMedium, color = RadarrWhite)
@@ -778,6 +918,21 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
                         Spacer(Modifier.width(8.dp))
                         StatusBadge(dept, RadarrBlueDark)
                     }
+                    personDetail?.birthday?.let { bd ->
+                        Spacer(Modifier.width(8.dp))
+                        Text(bd.take(4), style = MaterialTheme.typography.bodySmall, color = RadarrMuted)
+                        personDetail?.placeOfBirth?.let { place ->
+                            Text(" · $place", style = MaterialTheme.typography.bodySmall, color = RadarrMuted)
+                        }
+                    }
+                }
+                personDetail?.biography?.takeIf { it.isNotBlank() }?.let { bio ->
+                    Text(
+                        bio.take(300) + if (bio.length > 300) "…" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = RadarrMuted,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
                 }
                 when (ms) {
                     null, is UiState.Loading -> LoadingScreen("Loading filmography…")
@@ -805,13 +960,31 @@ private fun ByPersonMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, on
 // ── BY COLLECTION MODE ────────────────────────────────────────────────────────
 
 @Composable
-private fun ByCollectionMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+private fun ByCollectionMode(
+    tmdbRepo: TmdbRepository,
+    libraryMap: Map<Int, Int>,
+    preloadContext: Pair<Int, String>? = null,
+    onMovieClick: (Int) -> Unit
+) {
     var query by remember { mutableStateOf("") }
     var collectionsState by remember { mutableStateOf<UiState<List<com.radarrtv.androidtv.data.api.model.TmdbCollection>>>(UiState.Success(emptyList())) }
     var moviesState by remember { mutableStateOf<UiState<List<TmdbMovie>>?>(null) }
     var selectedCollection by remember { mutableStateOf<com.radarrtv.androidtv.data.api.model.TmdbCollection?>(null) }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
+
+    // Pre-load from movie detail "Browse Franchise" link
+    LaunchedEffect(preloadContext) {
+        preloadContext?.let { (colId, colName) ->
+            query = colName
+            selectedCollection = com.radarrtv.androidtv.data.api.model.TmdbCollection(id = colId, name = colName)
+            moviesState = UiState.Loading
+            moviesState = try {
+                val detail = tmdbRepo.getCollectionDetail(colId)
+                UiState.Success(detail.parts.sortedBy { it.releaseDate })
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1091,6 +1264,443 @@ private fun ByKeywordMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, o
                     onNext = { loadKeywordMovies(keyword.id, page + 1) },
                     onMovieClick = onMovieClick
                 )
+            }
+        }
+    }
+}
+
+// ── BY WATCH PROVIDER MODE ────────────────────────────────────────────────────
+
+private val WATCH_REGIONS = listOf(
+    "US" to "United States", "GB" to "United Kingdom", "CA" to "Canada",
+    "AU" to "Australia", "DE" to "Germany", "FR" to "France", "JP" to "Japan",
+    "IT" to "Italy", "ES" to "Spain", "MX" to "Mexico", "BR" to "Brazil",
+    "IN" to "India", "SE" to "Sweden", "NL" to "Netherlands", "KR" to "South Korea"
+)
+
+@Composable
+private fun ByWatchProviderMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+    var region by remember { mutableStateOf("US") }
+    var regionMenuOpen by remember { mutableStateOf(false) }
+    var providersState by remember { mutableStateOf<UiState<List<com.radarrtv.androidtv.data.api.model.TmdbWatchProvider>>>(UiState.Loading) }
+    var selectedProvider by remember { mutableStateOf<com.radarrtv.androidtv.data.api.model.TmdbWatchProvider?>(null) }
+    var monetizationType by remember { mutableStateOf("flatrate") }
+    var page by remember { mutableIntStateOf(1) }
+    var moviesState by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    val monetizationOptions = listOf(
+        "flatrate" to "Streaming", "free" to "Free", "ads" to "With Ads",
+        "rent" to "Rent", "buy" to "Buy"
+    )
+
+    fun loadProviders() {
+        scope.launch {
+            providersState = UiState.Loading
+            providersState = try {
+                val list = tmdbRepo.getWatchProviders(region)
+                    .sortedBy { it.displayPriority }
+                    .take(40)
+                UiState.Success(list)
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
+
+    fun loadMovies(providerId: Int, p: Int = 1) {
+        page = p
+        scope.launch {
+            moviesState = UiState.Loading
+            moviesState = try {
+                UiState.Success(
+                    tmdbRepo.discover(
+                        withWatchProviders = providerId.toString(),
+                        watchRegion = region,
+                        monetizationTypes = monetizationType,
+                        sortBy = "popularity.desc",
+                        page = p
+                    )
+                )
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
+
+    LaunchedEffect(region) { loadProviders(); selectedProvider = null; moviesState = null }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Region + monetization controls
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Region:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
+            Box {
+                TvFocusButton(onClick = { regionMenuOpen = true }) {
+                    Text(WATCH_REGIONS.find { it.first == region }?.second ?: region)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp))
+                }
+                DropdownMenu(expanded = regionMenuOpen, onDismissRequest = { regionMenuOpen = false }, modifier = Modifier.background(RadarrSurface)) {
+                    WATCH_REGIONS.forEach { (code, name) ->
+                        DropdownMenuItem(
+                            text = { Text(name, color = if (code == region) RadarrBlue else RadarrWhite) },
+                            onClick = { region = code; regionMenuOpen = false }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("Type:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                monetizationOptions.forEach { (type, label) ->
+                    var f by remember { mutableStateOf(false) }
+                    val sel = monetizationType == type
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (sel) RadarrBlueDark else if (f) RadarrSurface else RadarrCard)
+                            .border(2.dp, if (f || sel) RadarrBlue else Color.Transparent, RoundedCornerShape(16.dp))
+                            .clickable { monetizationType = type; selectedProvider?.let { loadMovies(it.providerId) } }
+                            .onFocusChanged { f = it.isFocused }
+                            .focusable()
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelSmall, color = if (sel || f) RadarrWhite else RadarrMuted)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (selectedProvider == null) {
+            // Provider grid
+            when (val s = providersState) {
+                is UiState.Loading -> LoadingScreen("Loading streaming services…")
+                is UiState.Error -> ErrorScreen(s.message)
+                is UiState.Success -> {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 130.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(s.data, key = { it.providerId }) { provider ->
+                            ProviderCard(provider, tmdbRepo) {
+                                selectedProvider = provider
+                                loadMovies(provider.providerId)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            val provider = selectedProvider!!
+            val backFocusRequester = remember { FocusRequester() }
+            LaunchedEffect(provider.providerId) {
+                runCatching { backFocusRequester.requestFocus() }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
+                if (provider.logoPath != null) {
+                    AsyncImage(
+                        model = "https://image.tmdb.org/t/p/w92${provider.logoPath}",
+                        contentDescription = provider.providerName,
+                        modifier = Modifier.size(32.dp).clip(RoundedCornerShape(6.dp))
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(provider.providerName, style = MaterialTheme.typography.titleMedium, color = RadarrWhite)
+                Spacer(Modifier.width(8.dp))
+                StatusBadge(region, RadarrBlueDark)
+                Spacer(Modifier.width(12.dp))
+                TvFocusButton(
+                    onClick = { selectedProvider = null; moviesState = null },
+                    modifier = Modifier.focusRequester(backFocusRequester)
+                ) {
+                    Icon(Icons.Default.Close, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Back")
+                }
+            }
+            PagedContent(moviesState ?: UiState.Loading, libraryMap, page,
+                onPrev = { loadMovies(provider.providerId, page - 1) },
+                onNext = { loadMovies(provider.providerId, page + 1) },
+                onMovieClick = onMovieClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProviderCard(provider: com.radarrtv.androidtv.data.api.model.TmdbWatchProvider, tmdbRepo: TmdbRepository, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isFocused) RadarrSurface else RadarrCard)
+            .border(2.dp, if (isFocused) RadarrBlue else Color.Transparent, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .padding(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(RadarrBg)
+        ) {
+            if (provider.logoPath != null) {
+                AsyncImage(
+                    model = "https://image.tmdb.org/t/p/w92${provider.logoPath}",
+                    contentDescription = provider.providerName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(4.dp)
+                )
+            } else {
+                Icon(Icons.Default.LiveTv, null, tint = RadarrMuted, modifier = Modifier.align(Alignment.Center).size(28.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            provider.providerName,
+            style = MaterialTheme.typography.labelSmall,
+            color = RadarrWhite,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+// ── BY COUNTRY MODE ───────────────────────────────────────────────────────────
+
+private val COMMON_COUNTRIES = listOf(
+    "US" to "United States", "GB" to "United Kingdom", "FR" to "France",
+    "DE" to "Germany", "JP" to "Japan", "KR" to "South Korea", "IN" to "India",
+    "IT" to "Italy", "ES" to "Spain", "AU" to "Australia", "CA" to "Canada",
+    "MX" to "Mexico", "BR" to "Brazil", "CN" to "China", "RU" to "Russia",
+    "SE" to "Sweden", "DK" to "Denmark", "NO" to "Norway", "IR" to "Iran",
+    "AR" to "Argentina", "NG" to "Nigeria", "ZA" to "South Africa"
+)
+
+@Composable
+private fun ByCountryMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+    var selectedCode by remember { mutableStateOf<String?>(null) }
+    var selectedName by remember { mutableStateOf("") }
+    var customCode by remember { mutableStateOf("") }
+    var page by remember { mutableIntStateOf(1) }
+    var moviesState by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun loadCountry(code: String, name: String, p: Int = 1) {
+        selectedCode = code
+        selectedName = name
+        page = p
+        scope.launch {
+            moviesState = UiState.Loading
+            moviesState = try {
+                UiState.Success(tmdbRepo.discover(originCountry = code, sortBy = "popularity.desc", page = p))
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (selectedCode == null) {
+            Text("Pick a country or enter a 2-letter code:", style = MaterialTheme.typography.bodyMedium, color = RadarrMuted)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = customCode,
+                    onValueChange = { customCode = it.uppercase().take(2) },
+                    placeholder = { Text("e.g. JP", color = RadarrMuted) },
+                    singleLine = true,
+                    modifier = Modifier.width(120.dp),
+                    colors = searchFieldColors()
+                )
+                TvFocusButton(
+                    onClick = { if (customCode.length == 2) loadCountry(customCode, customCode) },
+                    isPrimary = true,
+                    enabled = customCode.length == 2
+                ) {
+                    Icon(Icons.Default.Search, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Browse")
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 160.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                items(COMMON_COUNTRIES, key = { it.first }) { (code, name) ->
+                    var isFocused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isFocused) RadarrSurface else RadarrCard)
+                            .border(2.dp, if (isFocused) RadarrBlue else Color.Transparent, RoundedCornerShape(8.dp))
+                            .clickable { loadCountry(code, name) }
+                            .onFocusChanged { isFocused = it.isFocused }
+                            .focusable()
+                            .padding(16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(RadarrBlueDark)
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(code, style = MaterialTheme.typography.labelMedium, color = RadarrWhite)
+                            }
+                            Text(name, style = MaterialTheme.typography.bodyMedium, color = RadarrWhite)
+                        }
+                    }
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
+                Icon(Icons.Default.Public, null, tint = RadarrBlue, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Movies from: $selectedName ($selectedCode)", style = MaterialTheme.typography.titleMedium, color = RadarrWhite)
+                Spacer(Modifier.width(12.dp))
+                TvFocusButton(onClick = { selectedCode = null; moviesState = null }) {
+                    Icon(Icons.Default.Close, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Back")
+                }
+            }
+            PagedContent(moviesState ?: UiState.Loading, libraryMap, page,
+                onPrev = { loadCountry(selectedCode!!, selectedName, page - 1) },
+                onNext = { loadCountry(selectedCode!!, selectedName, page + 1) },
+                onMovieClick = onMovieClick
+            )
+        }
+    }
+}
+
+// ── BY LIST MODE ──────────────────────────────────────────────────────────────
+
+private val FEATURED_LISTS = listOf(
+    8530 to "IMDb Top 250",
+    10 to "Star Wars Saga",
+    3 to "The Avengers Collection",
+    28 to "Best Animated Films",
+    7 to "Steven Spielberg Films",
+    49 to "Oscar Best Picture Winners",
+    5 to "Christopher Nolan Collection"
+)
+
+@Composable
+private fun ByListMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+    var listIdInput by remember { mutableStateOf("") }
+    var listState by remember { mutableStateOf<UiState<com.radarrtv.androidtv.data.api.model.TmdbListDetail>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun loadList(id: Int) {
+        scope.launch {
+            listState = UiState.Loading
+            listState = try { UiState.Success(tmdbRepo.getList(id)) }
+            catch (e: Exception) { UiState.Error(e.message ?: "Failed to load list") }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (listState == null || listState is UiState.Error) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = listIdInput,
+                    onValueChange = { listIdInput = it.filter { c -> c.isDigit() } },
+                    placeholder = { Text("Enter TMDB list ID…", color = RadarrMuted) },
+                    leadingIcon = { Icon(Icons.Default.FormatListBulleted, null, tint = RadarrMuted) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = searchFieldColors()
+                )
+                TvFocusButton(
+                    onClick = { listIdInput.toIntOrNull()?.let { loadList(it) } },
+                    isPrimary = true,
+                    enabled = listIdInput.isNotBlank()
+                ) {
+                    Icon(Icons.Default.Search, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Load List")
+                }
+            }
+
+            if (listState is UiState.Error) {
+                Spacer(Modifier.height(8.dp))
+                Text((listState as UiState.Error).message, color = RadarrRed, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            Text("Featured Lists:", style = MaterialTheme.typography.titleSmall, color = RadarrMuted)
+            Spacer(Modifier.height(8.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 200.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(FEATURED_LISTS, key = { it.first }) { (id, name) ->
+                    var isFocused by remember { mutableStateOf(false) }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isFocused) RadarrSurface else RadarrCard)
+                            .border(2.dp, if (isFocused) RadarrBlue else Color.Transparent, RoundedCornerShape(8.dp))
+                            .clickable { loadList(id) }
+                            .onFocusChanged { isFocused = it.isFocused }
+                            .focusable()
+                            .padding(16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Default.FormatListNumbered, null, tint = RadarrBlue, modifier = Modifier.size(20.dp))
+                            Column {
+                                Text(name, style = MaterialTheme.typography.bodyLarge, color = RadarrWhite)
+                                Text("List #$id", style = MaterialTheme.typography.bodySmall, color = RadarrMuted)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            when (val s = listState) {
+                is UiState.Loading -> LoadingScreen("Loading list…")
+                is UiState.Success -> {
+                    val list = s.data
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
+                        Icon(Icons.Default.FormatListBulleted, null, tint = RadarrBlue, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(list.name, style = MaterialTheme.typography.titleMedium, color = RadarrWhite)
+                        Spacer(Modifier.width(8.dp))
+                        StatusBadge("${list.itemCount} movies", RadarrBlueDark)
+                        Spacer(Modifier.width(12.dp))
+                        TvFocusButton(onClick = { listState = null }) {
+                            Icon(Icons.Default.Close, null, Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Back")
+                        }
+                    }
+                    if (list.description.isNotBlank()) {
+                        Text(list.description, style = MaterialTheme.typography.bodySmall, color = RadarrMuted, modifier = Modifier.padding(bottom = 10.dp))
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 150.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(list.items, key = { it.id }) { movie ->
+                            TmdbMovieCard(movie = movie, inLibrary = libraryMap.containsKey(movie.id), onClick = { onMovieClick(movie.id) })
+                        }
+                    }
+                }
+                else -> {}
             }
         }
     }

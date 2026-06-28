@@ -34,27 +34,45 @@ class TmdbRepository(prefs: UserPreferences) {
         sortBy: String = "popularity.desc",
         genreIds: List<Int> = emptyList(),
         year: Int? = null,
+        releaseDateGte: String? = null,
+        releaseDateLte: String? = null,
         minRating: Float? = null,
         minVotes: Int? = null,
+        minRuntime: Int? = null,
+        maxRuntime: Int? = null,
         language: String? = null,
         withCast: String? = null,
         withCrew: String? = null,
         withCompanies: String? = null,
         withKeywords: String? = null,
         originCountry: String? = null,
+        withWatchProviders: String? = null,
+        watchRegion: String? = null,
+        monetizationTypes: String? = null,
+        certification: String? = null,
+        certificationCountry: String? = null,
         page: Int = 1
     ) = api.discoverMovies(
         sortBy = sortBy,
         withGenres = genreIds.joinToString(",").ifBlank { null },
         year = year,
+        releaseDateGte = releaseDateGte,
+        releaseDateLte = releaseDateLte,
         minRating = minRating,
         minVotes = minVotes,
+        minRuntime = minRuntime,
+        maxRuntime = maxRuntime,
         language = language,
         withCast = withCast,
         withCrew = withCrew,
         withCompanies = withCompanies,
         withKeywords = withKeywords,
         originCountry = originCountry,
+        withWatchProviders = withWatchProviders,
+        watchRegion = watchRegion,
+        monetizationTypes = monetizationTypes,
+        certification = certification,
+        certificationCountry = certificationCountry,
         page = page
     )
 
@@ -70,4 +88,26 @@ class TmdbRepository(prefs: UserPreferences) {
 
     // Collections
     suspend fun getCollectionDetail(collectionId: Int) = api.getCollectionDetail(collectionId)
+
+    // Lists
+    suspend fun getList(listId: Int) = api.getList(listId)
+
+    // Countries
+    suspend fun getCountries() = api.getCountries()
+
+    // Videos
+    suspend fun getMovieVideos(movieId: Int) = api.getMovieVideos(movieId).results
+
+    // Watch providers
+    suspend fun getWatchProviders(region: String = "US") = api.getWatchProviders(region).results
+
+    // Movie watch providers (where to stream for a specific movie)
+    suspend fun getMovieWatchProviders(movieId: Int, region: String = "US") =
+        api.getMovieWatchProviders(movieId).results[region]
+
+    // Movie reviews
+    suspend fun getMovieReviews(movieId: Int) = api.getMovieReviews(movieId).results
+
+    // Person detail
+    suspend fun getPersonDetail(personId: Int) = api.getPersonDetail(personId)
 }

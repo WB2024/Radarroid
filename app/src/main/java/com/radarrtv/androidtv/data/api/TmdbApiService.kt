@@ -81,6 +81,11 @@ interface TmdbApiService {
         @Query("with_keywords") withKeywords: String? = null,
         @Query("without_keywords") withoutKeywords: String? = null,
         @Query("with_origin_country") originCountry: String? = null,
+        @Query("with_watch_providers") withWatchProviders: String? = null,
+        @Query("watch_region") watchRegion: String? = null,
+        @Query("with_watch_monetization_types") monetizationTypes: String? = null,
+        @Query("certification") certification: String? = null,
+        @Query("certification_country") certificationCountry: String? = null,
         @Query("page") page: Int = 1,
         @Query("include_adult") includeAdult: Boolean = false
     ): TmdbPagedResult<TmdbMovie>
@@ -89,7 +94,7 @@ interface TmdbApiService {
     @GET("movie/{movie_id}")
     suspend fun getMovieDetail(
         @Path("movie_id") movieId: Int,
-        @Query("append_to_response") appendToResponse: String = "credits"
+        @Query("append_to_response") appendToResponse: String = "credits,keywords,release_dates"
     ): TmdbMovieDetail
 
     // ── Similar & Recommendations ─────────────────────────────────────────────
@@ -112,4 +117,37 @@ interface TmdbApiService {
     // ── Collections ───────────────────────────────────────────────────────────
     @GET("collection/{collection_id}")
     suspend fun getCollectionDetail(@Path("collection_id") collectionId: Int): TmdbCollectionDetail
+
+    // ── Lists ──────────────────────────────────────────────────────────────────
+    @GET("list/{list_id}")
+    suspend fun getList(@Path("list_id") listId: Int): TmdbListDetail
+
+    // ── Countries ─────────────────────────────────────────────────────────────
+    @GET("configuration/countries")
+    suspend fun getCountries(): List<TmdbCountry>
+
+    // ── Videos (trailers, teasers, featurettes) ───────────────────────────────
+    @GET("movie/{movie_id}/videos")
+    suspend fun getMovieVideos(@Path("movie_id") movieId: Int): TmdbVideoResult
+
+    // ── Watch providers ───────────────────────────────────────────────────────
+    @GET("watch/providers/movie")
+    suspend fun getWatchProviders(
+        @Query("watch_region") region: String = "US"
+    ): TmdbWatchProvidersResponse
+
+    // ── Movie watch providers (where to stream/rent/buy) ─────────────────────
+    @GET("movie/{movie_id}/watch/providers")
+    suspend fun getMovieWatchProviders(@Path("movie_id") movieId: Int): TmdbMovieWatchProvidersResponse
+
+    // ── Movie reviews ─────────────────────────────────────────────────────────
+    @GET("movie/{movie_id}/reviews")
+    suspend fun getMovieReviews(
+        @Path("movie_id") movieId: Int,
+        @Query("page") page: Int = 1
+    ): TmdbReviewResult
+
+    // ── Person detail (biography, birthday, etc.) ─────────────────────────────
+    @GET("person/{person_id}")
+    suspend fun getPersonDetail(@Path("person_id") personId: Int): TmdbPersonDetail
 }

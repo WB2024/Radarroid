@@ -61,8 +61,8 @@ fun TmdbSettingsScreen(prefs: UserPreferences, onBack: () -> Unit) {
 
             Text(
                 "Radarr uses TMDB as its primary metadata source. Providing a TMDB API key " +
-                "enables Radarroid to fetch additional data such as trailers, cast, crew, and " +
-                "extended movie details directly from TMDB.",
+                "enables Radarroid to fetch additional data such as cast, crew, collections, and " +
+                "extended movie details via Title Finder.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = RadarrMuted
             )
@@ -73,12 +73,20 @@ fun TmdbSettingsScreen(prefs: UserPreferences, onBack: () -> Unit) {
                     apiKey = it
                     saved = false
                 },
-                label = "TMDB API Key (v3 auth)",
-                placeholder = "Enter your TMDB API read access token…",
+                label = "API Key or Read Access Token",
+                placeholder = "Paste from themoviedb.org → Settings → API",
                 isPassword = true
             )
 
+            Text(
+                "You can use either your v3 API Key (short 32-character string) or your v4 " +
+                "Read Access Token (long JWT). Both are found on your TMDB account API page.",
+                style = MaterialTheme.typography.bodySmall,
+                color = RadarrMuted
+            )
+
             if (apiKey.isNotBlank()) {
+                val isBearer = apiKey.startsWith("eyJ") || apiKey.length > 100
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Default.CheckCircle,
@@ -88,7 +96,7 @@ fun TmdbSettingsScreen(prefs: UserPreferences, onBack: () -> Unit) {
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        "API key configured",
+                        if (isBearer) "Read Access Token configured (v4 Bearer)" else "API Key configured (v3)",
                         style = MaterialTheme.typography.bodyMedium,
                         color = RadarrGreen
                     )

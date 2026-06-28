@@ -22,6 +22,7 @@ fun SetupScreen(prefs: UserPreferences, onComplete: () -> Unit) {
     var serverUrl by remember { mutableStateOf("http://") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var apiKey by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
@@ -83,6 +84,22 @@ fun SetupScreen(prefs: UserPreferences, onComplete: () -> Unit) {
                 color = RadarrMuted
             )
 
+            Spacer(Modifier.height(20.dp))
+
+            TvTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = "API Key (optional — overrides username/password)",
+                placeholder = "Paste from Radarr → Settings → General"
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "If login fails, find your API key in Radarr under Settings → General and paste it above.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = RadarrMuted
+            )
+
             Spacer(Modifier.height(28.dp))
 
             if (status.isNotEmpty()) {
@@ -110,21 +127,28 @@ fun SetupScreen(prefs: UserPreferences, onComplete: () -> Unit) {
                         status = "Connecting…"
                         try {
                             val auth = AuthHelper(url)
-                            val apiKey = if (username.isBlank()) {
-                                status = "Checking server…"
-                                auth.tryNoAuth() ?: run {
-                                    status = "Server requires authentication — enter username and password"
-                                    isError = true
-                                    connecting = false
-                                    return@launch
+                            val resolvedApiKey = when {
+                                apiKey.isNotBlank() -> {
+                                    status = "Verifying API key…"
+                                    apiKey.trim()
                                 }
-                            } else {
-                                status = "Logging in…"
-                                auth.loginAndGetApiKey(username, password)
+                                username.isBlank() -> {
+                                    status = "Checking server…"
+                                    auth.tryNoAuth() ?: run {
+                                        status = "Server requires authentication — enter username/password or API key"
+                                        isError = true
+                                        connecting = false
+                                        return@launch
+                                    }
+                                }
+                                else -> {
+                                    status = "Logging in…"
+                                    auth.loginAndGetApiKey(username, password)
+                                }
                             }
                             status = "Connected!"
                             prefs.serverUrl = url
-                            prefs.apiKey = apiKey
+                            prefs.apiKey = resolvedApiKey
                             onComplete()
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e

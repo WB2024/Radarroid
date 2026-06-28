@@ -2,6 +2,9 @@ package com.radarrtv.androidtv.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -16,8 +19,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -40,13 +47,19 @@ fun TmdbMovieDetailDialog(
     onLibraryUpdated: (tmdbId: Int, radarrId: Int) -> Unit,
     onDismiss: () -> Unit,
     onBrowseSimilar: (tmdbId: Int, title: String) -> Unit = { _, _ -> },
-    onBrowseRecommendations: (tmdbId: Int, title: String) -> Unit = { _, _ -> }
+    onBrowseRecommendations: (tmdbId: Int, title: String) -> Unit = { _, _ -> },
+    onBrowseCollection: (collectionId: Int, name: String) -> Unit = { _, _ -> }
 ) {
     var detailState by remember { mutableStateOf<UiState<TmdbMovieDetail>>(UiState.Loading) }
     var showAddDialog by remember { mutableStateOf(false) }
     var profiles by remember { mutableStateOf<List<QualityProfile>>(emptyList()) }
     var rootFolders by remember { mutableStateOf<List<RootFolder>>(emptyList()) }
+    var trailerKey by remember { mutableStateOf<String?>(null) }
+    var watchProviders by remember { mutableStateOf<TmdbMovieWatchProviderEntry?>(null) }
+    var reviews by remember { mutableStateOf<List<TmdbReview>>(emptyList()) }
+    var selectedPersonId by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     LaunchedEffect(tmdbId) {
         detailState = try {
@@ -54,6 +67,20 @@ fun TmdbMovieDetailDialog(
         } catch (e: Exception) {
             UiState.Error(e.message ?: "Failed to load details")
         }
+    }
+
+    LaunchedEffect(tmdbId) {
+        trailerKey = try {
+            tmdbRepo.getMovieVideos(tmdbId)
+                .filter { it.site == "YouTube" && it.type == "Trailer" }
+                .sortedByDescending { it.official }
+                .firstOrNull()?.key
+        } catch (_: Exception) { null }
+    }
+
+    LaunchedEffect(tmdbId) {
+        launch { watchProviders = try { tmdbRepo.getMovieWatchProviders(tmdbId) } catch (_: Exception) { null } }
+        launch { reviews = try { tmdbRepo.getMovieReviews(tmdbId).take(3) } catch (_: Exception) { emptyList() } }
     }
 
     LaunchedEffect(Unit) {
@@ -171,6 +198,9 @@ fun TmdbMovieDetailDialog(
                                 if (movie.runtime != null && movie.runtime > 0) {
                                     StatusBadge("${movie.runtime}m", RadarrCard)
                                 }
+                                if (movie.certification.isNotBlank()) {
+                                    StatusBadge(movie.certification, RadarrOrange)
+                                }
                                 if (movie.voteAverage > 0) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.Star, null, tint = RadarrYellow, modifier = Modifier.size(14.dp))
@@ -240,10 +270,10 @@ fun TmdbMovieDetailDialog(
                             // Cast
                             val cast = movie.credits?.cast?.take(12) ?: emptyList()
                             if (cast.isNotEmpty()) {
-                                SectionHeader("Cast")
+                                SectionHeader("Cast  (select to explore filmography)")
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(cast) { member ->
-                                        CastChip(member, tmdbRepo)
+                                        CastChip(member, tmdbRepo, onClick = { selectedPersonId = member.id })
                                     }
                                 }
                             }
@@ -251,15 +281,174 @@ fun TmdbMovieDetailDialog(
                             // Director
                             val directors = movie.credits?.crew?.filter { it.job == "Director" } ?: emptyList()
                             if (directors.isNotEmpty()) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text("Director:", style = MaterialTheme.typography.bodyMedium, color = RadarrMuted)
-                                    Text(directors.joinToString(", ") { it.name }, style = MaterialTheme.typography.bodyMedium, color = RadarrWhite)
+                                    directors.forEach { director ->
+                                        var dirFocused by remember { mutableStateOf(false) }
+                                        Text(
+                                            director.name,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (dirFocused) RadarrBlue else RadarrWhite,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .border(1.dp, if (dirFocused) RadarrBlue else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(4.dp))
+                                                .clickable { selectedPersonId = director.id }
+                                                .onFocusChanged { dirFocused = it.isFocused }
+                                                .focusable()
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Collection / Franchise
+                            movie.belongsToCollection?.let { collection ->
+                                var collectionFocused by remember { mutableStateOf(false) }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (collectionFocused) RadarrCard else androidx.compose.ui.graphics.Color.Transparent)
+                                        .border(1.dp, if (collectionFocused) RadarrBlue else RadarrBorder, RoundedCornerShape(8.dp))
+                                        .clickable { onBrowseCollection(collection.id, collection.name) }
+                                        .onFocusChanged { collectionFocused = it.isFocused }
+                                        .focusable()
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Collections, null, tint = RadarrBlue, modifier = Modifier.size(16.dp))
+                                    Text("Franchise: ", style = MaterialTheme.typography.bodySmall, color = RadarrMuted)
+                                    Text(
+                                        collection.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = RadarrBlue
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(Icons.Default.ChevronRight, null, tint = RadarrMuted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+
+                            // Keywords
+                            val keywords = movie.keywords?.keywords?.take(8) ?: emptyList()
+                            if (keywords.isNotEmpty()) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                                ) {
+                                    keywords.forEach { kw ->
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .border(1.dp, RadarrBorder, RoundedCornerShape(12.dp))
+                                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                                        ) {
+                                            Text(kw.name, style = MaterialTheme.typography.labelSmall, color = RadarrMuted)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Watch providers
+                            val streaming = watchProviders?.flatrate ?: emptyList()
+                            val freeProviders = watchProviders?.free ?: emptyList()
+                            val adsProviders = watchProviders?.ads ?: emptyList()
+                            if (streaming.isNotEmpty() || freeProviders.isNotEmpty() || adsProviders.isNotEmpty()) {
+                                SectionHeader("Where to Watch")
+                                val allProviders = (streaming + freeProviders + adsProviders).distinctBy { it.providerId }.take(8)
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(allProviders) { provider ->
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(60.dp)) {
+                                            Box(
+                                                modifier = Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(RadarrCard)
+                                            ) {
+                                                if (provider.logoPath != null) {
+                                                    AsyncImage(
+                                                        model = "https://image.tmdb.org/t/p/w92${provider.logoPath}",
+                                                        contentDescription = provider.providerName,
+                                                        contentScale = ContentScale.Fit,
+                                                        modifier = Modifier.fillMaxSize().padding(4.dp)
+                                                    )
+                                                }
+                                            }
+                                            Spacer(Modifier.height(3.dp))
+                                            Text(
+                                                provider.providerName,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = RadarrMuted,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+                                        }
+                                    }
+                                }
+                                // Rent/Buy if no streaming
+                                val rent = watchProviders?.rent ?: emptyList()
+                                val buy = watchProviders?.buy ?: emptyList()
+                                if (streaming.isEmpty() && freeProviders.isEmpty() && (rent.isNotEmpty() || buy.isNotEmpty())) {
+                                    Text(
+                                        "Available to ${if (rent.isNotEmpty()) "rent" else ""}${if (rent.isNotEmpty() && buy.isNotEmpty()) "/" else ""}${if (buy.isNotEmpty()) "buy" else ""}: " +
+                                        (rent + buy).distinctBy { it.providerId }.take(4).joinToString(", ") { it.providerName },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = RadarrMuted
+                                    )
+                                }
+                            } else {
+                                val rent = watchProviders?.rent ?: emptyList()
+                                val buy = watchProviders?.buy ?: emptyList()
+                                if (watchProviders != null && (rent.isNotEmpty() || buy.isNotEmpty())) {
+                                    SectionHeader("Where to Watch")
+                                    Text(
+                                        "Available to ${if (rent.isNotEmpty()) "rent" else ""}${if (rent.isNotEmpty() && buy.isNotEmpty()) "/" else ""}${if (buy.isNotEmpty()) "buy" else ""}: " +
+                                        (rent + buy).distinctBy { it.providerId }.take(4).joinToString(", ") { it.providerName },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = RadarrMuted
+                                    )
+                                }
+                            }
+
+                            // Reviews
+                            if (reviews.isNotEmpty()) {
+                                SectionHeader("Reviews")
+                                reviews.take(2).forEach { review ->
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(RadarrCard)
+                                            .padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(review.author, style = MaterialTheme.typography.labelMedium, color = RadarrWhite)
+                                            review.authorDetails.rating?.let { r ->
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Icon(Icons.Default.Star, null, tint = RadarrYellow, modifier = Modifier.size(11.dp))
+                                                    Spacer(Modifier.width(2.dp))
+                                                    Text("${"%.1f".format(r)}/10", style = MaterialTheme.typography.labelSmall, color = RadarrYellow)
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            review.content.take(200).let { if (review.content.length > 200) "$it…" else it },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = RadarrMuted,
+                                            lineHeight = MaterialTheme.typography.bodySmall.lineHeight
+                                        )
+                                    }
+                                    Spacer(Modifier.height(6.dp))
                                 }
                             }
 
                             // Action buttons
                             HorizontalDivider(color = RadarrBorder)
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.horizontalScroll(rememberScrollState())
+                            ) {
                                 if (inLibrary) {
                                     TvFocusButton(onClick = {}, isPrimary = false) {
                                         Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = RadarrGreen)
@@ -273,6 +462,16 @@ fun TmdbMovieDetailDialog(
                                         Text("Add to Radarr")
                                     }
                                 }
+                                if (trailerKey != null) {
+                                    TvFocusButton(onClick = {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$trailerKey"))
+                                        context.startActivity(intent)
+                                    }) {
+                                        Icon(Icons.Default.PlayArrow, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Trailer")
+                                    }
+                                }
                                 TvFocusButton(onClick = { onBrowseSimilar(movie.id, movie.title) }) {
                                     Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
@@ -284,12 +483,33 @@ fun TmdbMovieDetailDialog(
                                     Text("Recommended")
                                 }
                                 if (!movie.imdbId.isNullOrBlank()) {
-                                    StatusBadge("IMDb: ${movie.imdbId}", RadarrMuted)
+                                    TvFocusButton(onClick = {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.imdb.com/title/${movie.imdbId}"))
+                                        context.startActivity(intent)
+                                    }) {
+                                        Text("IMDb ↗", style = MaterialTheme.typography.labelMedium, color = RadarrYellow)
+                                    }
                                 }
                             }
 
                             Spacer(Modifier.height(16.dp))
                         }
+                    }
+
+                    selectedPersonId?.let { pid ->
+                        PersonDetailDialog(
+                            personId = pid,
+                            tmdbRepo = tmdbRepo,
+                            libraryMap = libraryMap,
+                            onDismiss = { selectedPersonId = null },
+                            onMovieClick = { movieId ->
+                                selectedPersonId = null
+                                // Close this dialog and open the clicked movie
+                                onDismiss()
+                                // We can't directly open a new dialog from here, so we use a workaround:
+                                // The caller will need to handle this. For now, dismiss person dialog.
+                            }
+                        )
                     }
 
                     if (showAddDialog) {
@@ -319,10 +539,18 @@ fun TmdbMovieDetailDialog(
 }
 
 @Composable
-private fun CastChip(member: TmdbCastMember, tmdbRepo: TmdbRepository) {
+private fun CastChip(member: TmdbCastMember, tmdbRepo: TmdbRepository, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(72.dp)
+        modifier = Modifier
+            .width(72.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(2.dp, if (isFocused) RadarrBlue else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .padding(4.dp)
     ) {
         Box(
             modifier = Modifier
@@ -350,7 +578,7 @@ private fun CastChip(member: TmdbCastMember, tmdbRepo: TmdbRepository) {
         Text(
             member.name,
             style = MaterialTheme.typography.labelSmall,
-            color = RadarrWhite,
+            color = if (isFocused) RadarrBlue else RadarrWhite,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center

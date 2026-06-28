@@ -27,7 +27,7 @@
 - **Collections** — Browse your Radarr movie collections
 
 ### Title Finder (TMDB-Powered Discovery)
-A fully-featured movie discovery hub powered by The Movie Database API, with 11 browsing modes:
+A fully-featured movie discovery hub powered by The Movie Database API, with 16 browsing modes:
 
 | Mode | Description |
 |---|---|
@@ -38,10 +38,15 @@ A fully-featured movie discovery hub powered by The Movie Database API, with 11 
 | **In Cinemas** | Movies currently in theatres |
 | **Upcoming** | Releases coming soon |
 | **Discover** | Advanced filter: sort, genre chips (multi-select), year, min rating, min votes, language |
+| **Streaming** | Browse by streaming service (Netflix, Disney+, Prime, etc.) |
+| **By Genre** | Pick a genre and browse all matching titles |
 | **By Person** | Search any actor or director and browse their full filmography |
-| **By Collection** | Search movie series and franchises (e.g. Marvel, Star Wars) |
+| **Collections** | Search movie series and franchises (e.g. Marvel, Star Wars) |
 | **By Studio** | Search any production company and browse their catalogue |
 | **By Keyword** | Search thematic keywords (e.g. heist, time travel, dystopia) |
+| **By Country** | Browse movies by country of origin |
+| **By List** | Explore TMDB curated lists |
+| **Movie Night** | Random movie picker — spin for a suggestion from any genre, then add it straight to Radarr |
 
 Each result card shows the TMDB poster, rating, year, and a library badge if already in Radarr. Clicking any movie opens a full detail overlay with cast, crew, budget/revenue, studios, genres, and direct **Add to Radarr** or **View in Library** actions. From the detail view, launch **Similar** or **Recommended** browsing instantly.
 

@@ -58,7 +58,8 @@ private enum class FinderMode(val label: String, val icon: androidx.compose.ui.g
     BY_COMPANY("By Studio", Icons.Default.Business),
     BY_KEYWORD("By Keyword", Icons.Default.Tag),
     BY_COUNTRY("By Country", Icons.Default.Public),
-    BY_LIST("By List", Icons.Default.FormatListBulleted)
+    BY_LIST("By List", Icons.Default.FormatListBulleted),
+    MOVIE_NIGHT("Movie Night", Icons.Default.Shuffle)
 }
 
 private enum class SortField { DEFAULT, RATING, YEAR, TITLE, POPULARITY, VOTES }
@@ -157,6 +158,7 @@ fun TitleFinderScreen(
             FinderMode.BY_KEYWORD -> ByKeywordMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_COUNTRY -> ByCountryMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_LIST -> ByListMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
+            FinderMode.MOVIE_NIGHT -> MovieNightMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
         }
     }
 
@@ -1942,6 +1944,171 @@ private fun ByListMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMo
                     }
                 }
                 else -> {}
+            }
+        }
+    }
+}
+
+// ── Movie Night ───────────────────────────────────────────────────────────────
+
+@Composable
+private fun MovieNightMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+    var genres by remember { mutableStateOf<List<TmdbGenre>>(emptyList()) }
+    var selectedGenre by remember { mutableStateOf<TmdbGenre?>(null) }
+    var genreMenuOpen by remember { mutableStateOf(false) }
+    var minRating by remember { mutableStateOf(0f) }
+    var movieState by remember { mutableStateOf<UiState<TmdbMovie>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        genres = try { tmdbRepo.getGenres() } catch (_: Exception) { emptyList() }
+    }
+
+    fun roll() {
+        scope.launch {
+            movieState = UiState.Loading
+            movieState = try {
+                val page = (1..200).random()
+                val result = tmdbRepo.discover(
+                    genreIds = selectedGenre?.let { listOf(it.id) } ?: emptyList(),
+                    minRating = minRating.takeIf { it > 0f },
+                    minVotes = 50,
+                    sortBy = "popularity.desc",
+                    page = page
+                )
+                val movie = result.results.randomOrNull()
+                if (movie != null) UiState.Success(movie) else UiState.Error("No movies found — try different filters")
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(top = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Filter row
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Genre:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
+            Box {
+                TvFocusButton(onClick = { genreMenuOpen = true }) {
+                    Text(selectedGenre?.name ?: "Any")
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp))
+                }
+                DropdownMenu(
+                    expanded = genreMenuOpen,
+                    onDismissRequest = { genreMenuOpen = false },
+                    modifier = Modifier.background(RadarrSurface).heightIn(max = 300.dp)
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Any genre", color = if (selectedGenre == null) RadarrBlue else RadarrWhite) },
+                        onClick = { selectedGenre = null; genreMenuOpen = false }
+                    )
+                    genres.forEach { g ->
+                        DropdownMenuItem(
+                            text = { Text(g.name, color = if (selectedGenre?.id == g.id) RadarrBlue else RadarrWhite) },
+                            onClick = { selectedGenre = g; genreMenuOpen = false }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(8.dp))
+            Text("Min Rating:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(0f to "Any", 6f to "6+", 7f to "7+", 8f to "8+").forEach { (rating, label) ->
+                    var f by remember { mutableStateOf(false) }
+                    val sel = minRating == rating
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(if (sel) RadarrBlue else if (f) RadarrSurface else RadarrCard)
+                            .border(2.dp, if (sel || f) RadarrBlue else Color.Transparent, RoundedCornerShape(20.dp))
+                            .clickable { minRating = rating }
+                            .onFocusChanged { f = it.isFocused }
+                            .focusable()
+                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text(label, color = if (sel) Color.Black else RadarrWhite, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            TvFocusButton(onClick = ::roll, isPrimary = true) {
+                Icon(Icons.Default.Shuffle, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Pick a Movie")
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        when (val s = movieState) {
+            null -> {
+                Spacer(Modifier.weight(1f))
+                Icon(Icons.Default.Shuffle, null, tint = RadarrMuted.copy(alpha = 0.3f), modifier = Modifier.size(80.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Press \"Pick a Movie\" for a random suggestion", color = RadarrMuted, style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.weight(1f))
+            }
+            is UiState.Loading -> LoadingScreen("Finding something to watch…")
+            is UiState.Error -> ErrorScreen(s.message, onRetry = ::roll)
+            is UiState.Success -> {
+                val movie = s.data
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    AsyncImage(
+                        model = movie.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" },
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .width(200.dp)
+                            .aspectRatio(2f / 3f)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            movie.title + if (movie.year.isNotBlank()) " (${movie.year})" else "",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = RadarrWhite
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (movie.voteAverage > 0) {
+                                Icon(Icons.Default.Star, null, tint = Color(0xFFFFD700), modifier = Modifier.size(18.dp))
+                                Text("%.1f".format(movie.voteAverage), color = RadarrWhite, style = MaterialTheme.typography.bodyLarge)
+                            }
+                            if (libraryMap.containsKey(movie.id)) {
+                                StatusBadge("In Library", RadarrBlueDark)
+                            }
+                        }
+                        if (!movie.overview.isNullOrBlank()) {
+                            Text(
+                                movie.overview.take(300) + if ((movie.overview?.length ?: 0) > 300) "…" else "",
+                                color = RadarrMuted,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            TvFocusButton(onClick = { onMovieClick(movie.id) }, isPrimary = true) {
+                                Icon(Icons.Default.Info, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("View Details")
+                            }
+                            TvFocusButton(onClick = ::roll) {
+                                Icon(Icons.Default.Shuffle, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Pick Another")
+                            }
+                        }
+                    }
+                }
             }
         }
     }

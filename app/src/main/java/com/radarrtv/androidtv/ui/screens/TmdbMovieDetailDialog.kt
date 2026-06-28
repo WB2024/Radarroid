@@ -52,6 +52,7 @@ fun TmdbMovieDetailDialog(
 ) {
     var detailState by remember { mutableStateOf<UiState<TmdbMovieDetail>>(UiState.Loading) }
     var showAddDialog by remember { mutableStateOf(false) }
+    var addError by remember { mutableStateOf<String?>(null) }
     var profiles by remember { mutableStateOf<List<QualityProfile>>(emptyList()) }
     var rootFolders by remember { mutableStateOf<List<RootFolder>>(emptyList()) }
     var trailerKey by remember { mutableStateOf<String?>(null) }
@@ -524,12 +525,25 @@ fun TmdbMovieDetailDialog(
                                         val added = radarrRepo.addMovie(req)
                                         onLibraryUpdated(added.tmdbId, added.id)
                                         showAddDialog = false
-                                    } catch (_: Exception) {
+                                    } catch (e: Exception) {
                                         showAddDialog = false
+                                        addError = e.message?.takeIf { it.isNotBlank() } ?: "Failed to add movie"
                                     }
                                 }
                             },
                             onDismiss = { showAddDialog = false }
+                        )
+                    }
+
+                    addError?.let { msg ->
+                        AlertDialog(
+                            onDismissRequest = { addError = null },
+                            title = { Text("Add Failed", color = RadarrWhite) },
+                            text = { Text(msg, color = RadarrMuted) },
+                            confirmButton = {
+                                TvFocusButton(onClick = { addError = null }, isPrimary = true) { Text("OK") }
+                            },
+                            containerColor = RadarrSurface
                         )
                     }
                 }

@@ -23,6 +23,7 @@ object Routes {
     const val WANTED = "wanted"
     const val COLLECTIONS = "collections"
     const val DISCOVER = "discover"
+    const val TITLE_FINDER = "title_finder"
     const val SETTINGS = "settings"
     const val SETTINGS_QUALITY = "settings/quality_profiles"
     const val SETTINGS_INDEXERS = "settings/indexers"
@@ -35,6 +36,7 @@ object Routes {
     const val SETTINGS_TAGS = "settings/tags"
     const val SETTINGS_ROOT_FOLDERS = "settings/root_folders"
     const val SETTINGS_HOST = "settings/host"
+    const val SETTINGS_TMDB = "settings/tmdb"
     const val SYSTEM = "system"
 
     fun movieDetail(movieId: Int) = "movie_detail/$movieId"
@@ -72,7 +74,8 @@ fun RadarrNavHost(prefs: UserPreferences) {
 @Composable
 fun MainNavHost(
     navController: NavHostController,
-    repo: RadarrRepository
+    repo: RadarrRepository,
+    prefs: UserPreferences
 ) {
     NavHost(navController = navController, startDestination = Routes.MOVIES) {
         composable(Routes.MOVIES) {
@@ -112,6 +115,13 @@ fun MainNavHost(
                 onMovieClick = { id -> navController.navigate(Routes.movieDetail(id)) }
             )
         }
+        composable(Routes.TITLE_FINDER) {
+            TitleFinderScreen(
+                radarrRepo = repo,
+                prefs = prefs,
+                onMovieAdded = { id -> navController.navigate(Routes.movieDetail(id)) }
+            )
+        }
         composable(Routes.SETTINGS) {
             SettingsScreen(onNavigate = { navController.navigate(it) })
         }
@@ -147,6 +157,9 @@ fun MainNavHost(
         }
         composable(Routes.SETTINGS_HOST) {
             HostConfigScreen(repo = repo, onBack = { navController.popBackStack() })
+        }
+        composable(Routes.SETTINGS_TMDB) {
+            TmdbSettingsScreen(prefs = prefs, onBack = { navController.popBackStack() })
         }
         composable(Routes.SYSTEM) {
             SystemScreen(repo = repo)

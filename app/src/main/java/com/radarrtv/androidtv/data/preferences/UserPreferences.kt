@@ -15,6 +15,10 @@ class UserPreferences(context: Context) {
         get() = prefs.getString(KEY_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_API_KEY, value).apply()
 
+    var tmdbApiKey: String
+        get() = prefs.getString(KEY_TMDB_API_KEY, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_TMDB_API_KEY, value).apply()
+
     fun isConfigured(): Boolean = serverUrl.isNotBlank() && apiKey.isNotBlank()
 
     fun clear() {
@@ -24,5 +28,6 @@ class UserPreferences(context: Context) {
     companion object {
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_API_KEY = "api_key"
+        private const val KEY_TMDB_API_KEY = "tmdb_api_key"
     }
 }

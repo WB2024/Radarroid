@@ -28,7 +28,8 @@ data class NavEntry(
 
 val navEntries = listOf(
     NavEntry(Routes.MOVIES, "Movies", Icons.Default.Movie),
-    NavEntry(Routes.DISCOVER, "Discover", Icons.Default.Search),
+    NavEntry(Routes.TITLE_FINDER, "Title Finder", Icons.Default.Explore),
+    NavEntry(Routes.DISCOVER, "Add Movie", Icons.Default.AddCircle),
     NavEntry(Routes.CALENDAR, "Calendar", Icons.Default.CalendarMonth),
     NavEntry(Routes.ACTIVITY, "Activity", Icons.Default.Download),
     NavEntry(Routes.WANTED, "Wanted", Icons.Default.Warning),
@@ -113,7 +114,7 @@ fun MainScreen(
                 .weight(1f)
                 .fillMaxHeight()
         ) {
-            MainNavHost(navController = innerNav, repo = repo)
+            MainNavHost(navController = innerNav, repo = repo, prefs = prefs)
         }
     }
 }

@@ -35,7 +35,8 @@ val settingsEntries = listOf(
     SettingsEntry(Routes.SETTINGS_NOTIFICATIONS, "Notifications", "Alert and push notification connections", Icons.Default.Notifications),
     SettingsEntry(Routes.SETTINGS_TAGS, "Tags", "Manage tags for organizing content", Icons.Default.Label),
     SettingsEntry(Routes.SETTINGS_ROOT_FOLDERS, "Root Folders", "Manage media library locations", Icons.Default.Storage),
-    SettingsEntry(Routes.SETTINGS_HOST, "General", "Host, URL, and authentication settings", Icons.Default.Settings)
+    SettingsEntry(Routes.SETTINGS_HOST, "General", "Host, URL, and authentication settings", Icons.Default.Settings),
+    SettingsEntry(Routes.SETTINGS_TMDB, "TMDB", "The Movie Database API key for metadata", Icons.Default.Movie)
 )
 
 @Composable

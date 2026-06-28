@@ -46,12 +46,13 @@ import kotlinx.coroutines.launch
 private enum class FinderMode(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     SEARCH("Search", Icons.Default.Search),
     TRENDING("Trending", Icons.Default.TrendingUp),
+    DISCOVER("Discover", Icons.Default.Tune),
     POPULAR("Popular", Icons.Default.LocalFireDepartment),
     TOP_RATED("Top Rated", Icons.Default.Star),
     NOW_PLAYING("In Cinemas", Icons.Default.Theaters),
     UPCOMING("Upcoming", Icons.Default.EventAvailable),
-    DISCOVER("Discover", Icons.Default.Tune),
     WATCH_PROVIDERS("Streaming", Icons.Default.LiveTv),
+    BY_GENRE("By Genre", Icons.Default.Category),
     BY_PERSON("By Person", Icons.Default.Person),
     BY_COLLECTION("Collections", Icons.Default.Collections),
     BY_COMPANY("By Studio", Icons.Default.Business),
@@ -149,6 +150,7 @@ fun TitleFinderScreen(
             FinderMode.UPCOMING -> PagedListMode("Upcoming", libraryMap, { tmdbRepo.getUpcoming(it) }) { selectedTmdbId = it }
             FinderMode.DISCOVER -> DiscoverMode(tmdbRepo, libraryMap, similarContext, recommendContext) { selectedTmdbId = it }
             FinderMode.WATCH_PROVIDERS -> ByWatchProviderMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
+            FinderMode.BY_GENRE -> ByGenreMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_PERSON -> ByPersonMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
             FinderMode.BY_COLLECTION -> ByCollectionMode(tmdbRepo, libraryMap, collectionContext) { selectedTmdbId = it; collectionContext = null }
             FinderMode.BY_COMPANY -> ByCompanyMode(tmdbRepo, libraryMap) { selectedTmdbId = it }
@@ -558,6 +560,33 @@ private fun PagedListMode(
 
 // ── DISCOVER MODE ─────────────────────────────────────────────────────────────
 
+private data class DiscoverPreset(
+    val label: String,
+    val sortBy: String = "popularity.desc",
+    val minRating: String = "",
+    val minVotes: String = "",
+    val yearFrom: String = "",
+    val yearTo: String = "",
+    val minRuntime: String = "",
+    val maxRuntime: String = "",
+    val certification: String = "",
+    val language: String = ""
+)
+
+private val DISCOVER_PRESETS = listOf(
+    DiscoverPreset("🔥 Trending Now"),
+    DiscoverPreset("⭐ Critics' Picks", sortBy = "vote_average.desc", minRating = "8.0", minVotes = "5000"),
+    DiscoverPreset("💎 Hidden Gems", sortBy = "vote_average.desc", minRating = "7.5", minVotes = "100"),
+    DiscoverPreset("🎬 80s Gold", sortBy = "vote_average.desc", yearFrom = "1980", yearTo = "1989", minVotes = "500"),
+    DiscoverPreset("🕺 90s Classics", sortBy = "vote_average.desc", yearFrom = "1990", yearTo = "1999", minVotes = "500"),
+    DiscoverPreset("👨‍👩‍👧 Family Night", sortBy = "popularity.desc", certification = "G"),
+    DiscoverPreset("🌍 French Cinema", sortBy = "vote_average.desc", minRating = "7.0", minVotes = "200", language = "fr"),
+    DiscoverPreset("🇯🇵 Japanese", sortBy = "vote_average.desc", minRating = "7.0", minVotes = "200", language = "ja"),
+    DiscoverPreset("⚡ Short & Sweet", sortBy = "vote_average.desc", minRating = "7.0", maxRuntime = "90"),
+    DiscoverPreset("🏆 Box Office", sortBy = "revenue.desc", minVotes = "1000"),
+    DiscoverPreset("🆕 2020s Best", sortBy = "vote_average.desc", yearFrom = "2020", minRating = "7.5", minVotes = "500")
+)
+
 private val SORT_OPTIONS = listOf(
     "popularity.desc" to "Most Popular",
     "popularity.asc" to "Least Popular",
@@ -592,8 +621,25 @@ private fun DiscoverMode(
     var originCountry by remember { mutableStateOf("") }
     var certification by remember { mutableStateOf("") }
     var certMenuOpen by remember { mutableStateOf(false) }
+    var activePreset by remember { mutableStateOf<String?>(null) }
+    var showAdvancedFilters by remember { mutableStateOf(false) }
+    var state by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>>(UiState.Success(
+        com.radarrtv.androidtv.data.api.model.TmdbPagedResult())) }
+
+    fun applyPreset(preset: DiscoverPreset) {
+        sortBy = preset.sortBy
+        minRating = preset.minRating
+        minVotes = preset.minVotes
+        yearFrom = preset.yearFrom
+        yearTo = preset.yearTo
+        minRuntime = preset.minRuntime
+        maxRuntime = preset.maxRuntime
+        certification = preset.certification
+        language = preset.language
+        selectedGenres = emptySet()
+        activePreset = preset.label
+    }
     var page by remember { mutableIntStateOf(1) }
-    var state by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>>(UiState.Loading) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -629,14 +675,13 @@ private fun DiscoverMode(
                         tmdbRepo.discover(
                             sortBy = sortBy,
                             genreIds = selectedGenres.toList(),
-                            year = if (yearFrom.isBlank() && yearTo.isBlank()) null else null,
                             releaseDateGte = yearFrom.toIntOrNull()?.let { "$it-01-01" },
                             releaseDateLte = yearTo.toIntOrNull()?.let { "$it-12-31" },
                             minRating = minRating.toFloatOrNull(),
                             minVotes = minVotes.toIntOrNull(),
                             minRuntime = minRuntime.toIntOrNull(),
                             maxRuntime = maxRuntime.toIntOrNull(),
-                            language = language.trim().ifBlank { null },
+                            language = language.trim().let { if (it.startsWith("!") || it.isBlank()) null else it },
                             originCountry = originCountry.trim().uppercase().ifBlank { null },
                             certification = certification.ifBlank { null },
                             certificationCountry = if (certification.isNotBlank()) "US" else null,
@@ -674,6 +719,68 @@ private fun DiscoverMode(
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Quick presets
+                Text("Quick Presets:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    DISCOVER_PRESETS.forEach { preset ->
+                        val isActive = activePreset == preset.label
+                        var isFocused by remember { mutableStateOf(false) }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    when {
+                                        isActive -> RadarrBlue
+                                        isFocused -> RadarrSurface
+                                        else -> RadarrBg
+                                    }
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isFocused || isActive) RadarrBlue else RadarrBorder,
+                                    RoundedCornerShape(20.dp)
+                                )
+                                .clickable { applyPreset(preset); runDiscover(1) }
+                                .onFocusChanged { isFocused = it.isFocused }
+                                .focusable()
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                preset.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (isActive) RadarrBg else if (isFocused) RadarrBlue else RadarrWhite
+                            )
+                        }
+                    }
+                }
+
+                // Advanced filters toggle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TvFocusButton(onClick = { showAdvancedFilters = !showAdvancedFilters }) {
+                        Icon(
+                            if (showAdvancedFilters) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            null, Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (showAdvancedFilters) "Hide Filters" else "Advanced Filters")
+                    }
+                    if (!showAdvancedFilters) {
+                        TvFocusButton(onClick = { runDiscover(1) }, isPrimary = true) {
+                            Icon(Icons.Default.Search, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Discover")
+                        }
+                    }
+                }
+
+                if (showAdvancedFilters) {
+
                 // Sort
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Sort:", color = RadarrMuted, style = MaterialTheme.typography.bodyMedium)
@@ -809,11 +916,26 @@ private fun DiscoverMode(
                         Text("Discover")
                     }
                 }
+
+                } // end showAdvancedFilters
             }
             Spacer(Modifier.height(12.dp))
         }
 
-        PagedContent(state, libraryMap, page, onPrev = { page-- }, onNext = { page++ }, onMovieClick = onMovieClick)
+        PagedContent(
+            state, libraryMap, page,
+            onPrev = {
+                if (similarContext != null) { page--; return@PagedContent }
+                if (recommendContext != null) { page--; return@PagedContent }
+                runDiscover(page - 1)
+            },
+            onNext = {
+                if (similarContext != null) { page++; return@PagedContent }
+                if (recommendContext != null) { page++; return@PagedContent }
+                runDiscover(page + 1)
+            },
+            onMovieClick = onMovieClick
+        )
     }
 }
 
@@ -1466,6 +1588,125 @@ private fun ProviderCard(provider: com.radarrtv.androidtv.data.api.model.TmdbWat
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+    }
+}
+
+// ── BY GENRE MODE ─────────────────────────────────────────────────────────────
+
+private val GENRE_ACCENTS = listOf(
+    0xFF6200EE, 0xFF03DAC5, 0xFFFF6D00, 0xFF4CAF50, 0xFFE91E63,
+    0xFF2196F3, 0xFFFF9800, 0xFF9C27B0, 0xFF00BCD4, 0xFF8BC34A,
+    0xFFF44336, 0xFF3F51B5, 0xFF009688, 0xFFCDDC39, 0xFF607D8B,
+    0xFF795548, 0xFFFF5722, 0xFF673AB7, 0xFF1976D2, 0xFFAFB42B
+).map { androidx.compose.ui.graphics.Color(it.toLong()) }
+
+@Composable
+private fun ByGenreMode(tmdbRepo: TmdbRepository, libraryMap: Map<Int, Int>, onMovieClick: (Int) -> Unit) {
+    var genres by remember { mutableStateOf<List<TmdbGenre>>(emptyList()) }
+    var selectedGenre by remember { mutableStateOf<TmdbGenre?>(null) }
+    var subSortBy by remember { mutableStateOf("popularity.desc") }
+    var subSortMenuOpen by remember { mutableStateOf(false) }
+    var page by remember { mutableIntStateOf(1) }
+    var moviesState by remember { mutableStateOf<UiState<TmdbPagedResult<TmdbMovie>>?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        genres = try { tmdbRepo.getGenres() } catch (_: Exception) { emptyList() }
+    }
+
+    fun loadGenre(genreId: Int, p: Int = 1) {
+        page = p
+        scope.launch {
+            moviesState = UiState.Loading
+            moviesState = try {
+                UiState.Success(tmdbRepo.discover(genreIds = listOf(genreId), sortBy = subSortBy, page = p))
+            } catch (e: Exception) { UiState.Error(e.message ?: "Failed") }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (selectedGenre == null) {
+            if (genres.isEmpty()) {
+                LoadingScreen("Loading genres…")
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 160.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(genres, key = { it.id }) { genre ->
+                        val accent = GENRE_ACCENTS[genres.indexOf(genre) % GENRE_ACCENTS.size]
+                        GenreCard(genre, accent) {
+                            selectedGenre = genre
+                            subSortBy = "popularity.desc"
+                            loadGenre(genre.id, 1)
+                        }
+                    }
+                }
+            }
+        } else {
+            val genre = selectedGenre!!
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(bottom = 10.dp)
+            ) {
+                Icon(Icons.Default.Category, null, tint = RadarrBlue, modifier = Modifier.size(20.dp))
+                Text(genre.name, style = MaterialTheme.typography.titleMedium, color = RadarrWhite)
+                Spacer(Modifier.weight(1f))
+                Box {
+                    TvFocusButton(onClick = { subSortMenuOpen = true }) {
+                        Text(SORT_OPTIONS.find { it.first == subSortBy }?.second ?: "Sort")
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.ArrowDropDown, null, Modifier.size(16.dp))
+                    }
+                    DropdownMenu(expanded = subSortMenuOpen, onDismissRequest = { subSortMenuOpen = false }, modifier = Modifier.background(RadarrSurface)) {
+                        SORT_OPTIONS.forEach { (value, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label, color = if (value == subSortBy) RadarrBlue else RadarrWhite) },
+                                onClick = { subSortBy = value; subSortMenuOpen = false; loadGenre(genre.id, 1) }
+                            )
+                        }
+                    }
+                }
+                TvFocusButton(onClick = { selectedGenre = null; moviesState = null }) {
+                    Icon(Icons.Default.Close, null, Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Back")
+                }
+            }
+            PagedContent(
+                moviesState ?: UiState.Loading, libraryMap, page,
+                onPrev = { loadGenre(genre.id, page - 1) },
+                onNext = { loadGenre(genre.id, page + 1) },
+                onMovieClick = onMovieClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun GenreCard(genre: TmdbGenre, accent: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(80.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isFocused) accent.copy(alpha = 0.3f) else accent.copy(alpha = 0.15f))
+            .border(2.dp, if (isFocused) accent else accent.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+    ) {
+        Text(
+            genre.name,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (isFocused) accent else accent.copy(alpha = 0.85f)
         )
     }
 }

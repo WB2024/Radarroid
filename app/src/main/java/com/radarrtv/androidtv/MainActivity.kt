@@ -16,6 +16,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val prefs = UserPreferences(applicationContext)
+        // ADB config injection: adb shell am start -n .../.MainActivity --es server_url "http://..." --es api_key "..." --es tmdb_api_key "..."
+        intent?.getStringExtra("server_url")?.takeIf { it.isNotBlank() }?.let { prefs.serverUrl = it }
+        intent?.getStringExtra("api_key")?.takeIf { it.isNotBlank() }?.let { prefs.apiKey = it }
+        intent?.getStringExtra("tmdb_api_key")?.takeIf { it.isNotBlank() }?.let { prefs.tmdbApiKey = it }
         setContent {
             RadarrTVTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
